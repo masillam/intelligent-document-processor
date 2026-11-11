@@ -1,0 +1,81 @@
+
+Choosing a text diagram for the explanation
+Purpose
+The project turns messy documents (PDF, Word, HTML, Markdown) into a searchable knowledge base, lets you ask questions and get grounded answers, and measures which chunking strategy gives the best answers.
+
+It has two jobs:
+
+Product: upload documents, ask questions, get answers with sources.
+Experiment: compare recursive and semantic chunking with numbers instead of guessing.
+Architecture
+The core logic lives in src/idp/. Three separate entry points use it, and they don’t depend on each other.
+
+                ┌───────────────────────────────────────────┐
+                │          CORE LIBRARY  (src/idp/)         │
+                │                                           │
+                │  loaders.py     read PDF/DOCX/HTML/MD     │
+                │  extraction.py  LLM → summary, key points │
+                │  chunking.py    recursive | semantic      │
+                │  vectorstore.py embeddings + Qdrant/Pine  │
+                │  pipeline.py    ingest_file()  (glue)     │
+                │  qa.py          answer_question()         │
+                └───────────────────────────────────────────┘
+                   ▲                 ▲                  ▲
+                   │                 │                  │
+          api.py (FastAPI)    run_eval.py        dashboard/app.py
+          run by uvicorn      run by python      run by streamlit
+          "use the system"    "measure it"       "view the results"
+                                   │                    ▲
+                                   └─ results/eval_results.json ─┘
+The external services are:
+
+OpenAI: creates embeddings, writes summaries and answers, and acts as the judge for RAGAS.
+Qdrant (or Pinecone): stores the vectors and chunk text.
+What uvicorn and FastAPI do (and don’t do)
+FastAPI (api.py) defines the web endpoints /ingest, /ask and /documents. It’s only a set of Python functions with URLs attached.
+uvicorn is the server program that runs that app, listens on port 8000, and passes HTTP requests (like your curl commands) to those functions.
+Streamlit is a separate server that draws the dashboard on port 8501.
+run_eval.py does not use uvicorn or FastAPI at all. It’s a plain Python script that imports ingest_file() and answer_question() from the core library and calls them directly. You don’t need the API running when you run the eval. You do need Qdrant running and your OpenAI key set.
+
+Flow of the eval command
+bash
+python evaluation/run_eval.py --docs data/sample_docs --questions evaluation/eval_questions.json \
+    --strategies recursive semantic --chunk-size 1000 --chunk-overlap 150
+The arguments mean:
+
+--docs: the folder of documents to test on.
+--questions: the file of questions with correct reference answers.
+--strategies recursive semantic: the two methods to compare.
+--chunk-size 1000 --chunk-overlap 150: chunk settings (these affect recursive; semantic uses them only to cap oversized chunks).
+The script then does this:
+
+for strategy in [recursive, semantic]:
+
+  1. INGEST   each file in data/sample_docs
+       loaders → chunking(strategy) → OpenAI embeddings → Qdrant
+       (fresh collection: idp-eval-<strategy>-<timestamp>)
+
+  2. ASK      each question in eval_questions.json
+       embed question → fetch top 4 chunks from Qdrant
+       → GPT writes answer from those chunks
+       → record {question, retrieved chunks, answer, reference answer}
+
+  3. SCORE    with RAGAS (GPT acts as judge)
+       faithfulness       answer supported by the chunks?
+       context precision  retrieved chunks relevant?
+       context recall     chunks contain what the reference answer needs?
+
+write results/eval_results.json      ← only written once everything finishes
+Then:
+
+bash
+streamlit run dashboard/app.py
+reads that JSON file and draws the comparison charts.
+
+Putting it all together
+Here’s the order to run things:
+
+docker compose up -d starts Qdrant, the database.
+Either uvicorn idp.api:app --reload, then curl /ingest and /ask, to use the system on your documents. Or python evaluation/run_eval.py ... to measure which chunking works best.
+streamlit run dashboard/app.py to view the eval results.
+Steps 2 and 3 are independent. The API never creates the eval results, and the eval never needs the API. Both share the same core code, which is why the strategy you find best in the eval is one you can pass as strategy=... whe

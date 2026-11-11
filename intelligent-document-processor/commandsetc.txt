@@ -1,0 +1,250 @@
+
+I’ll build the full project first, then package it so you can push it to GitHub.
+
+I built the project, but I couldn’t create the GitHub repo or upload it myself. That needs your GitHub login, which I don’t have, so I can’t give you a real link. The project is in intelligent-document-processor.zip, already committed to a local git repo, and the 5 unit tests pass. I haven’t run the OpenAI, Qdrant/Pinecone or RAGAS parts, since they need your API keys.
+
+To get your GitHub link (about 1 minute):
+
+bash
+unzip intelligent-document-processor.zip && cd intelligent-document-processor
+gh auth login                       # one-time
+./scripts/push_to_github.sh         # creates a public repo and pushes
+Without the GitHub CLI, create an empty repo on github.com, then run git remote add origin <url> && git push -u origin main.
+
+What’s in it:
+
+Ingestion: loaders for PDF, DOCX, HTML and Markdown, plus LLM extraction of a summary, key points, entities and topics.
+Chunking: a recursive splitter with configurable size and overlap, and a semantic splitter.
+Storage: text-embedding-3-large embeddings in Qdrant or Pinecone, with one collection per strategy.
+API: a FastAPI service with /ingest, /ask and /documents.
+Evaluation: evaluation/run_eval.py scores each strategy with RAGAS on faithfulness, context precision and context recall.
+Dashboard: a Streamlit page comparing the strategies.
+The 0.88 faithfulness / 0.84 context precision figures: I didn’t hard-code them. The eval script writes whatever scores your run produces, and the README says so. Run it on your own documents with 30+ question/reference pairs, since the bundled sample is only one document and five questions. If you quote those numbers on your resume, they should match a run you actually did, because interviewers may ask to see it.
+
+To run it end to end, copy .env.example to .env, add your OPENAI_API_KEY, and start Qdrant with docker compose up -d.
+
+Intelligent document processor
+ZIP
+how to run this
+
+1. Set up
+Unzip the project and open a terminal in it. You need Python 3.10+ and an OpenAI API key. Docker is only needed for Qdrant.
+
+bash
+cd intelligent-document-processor
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+cp .env.example .env               # Windows: copy .env.example .env
+Open .env and set OPENAI_API_KEY=sk-....
+
+2. Start the vector database
+Qdrant (default, local):
+
+bash
+docker compose up -d
+Pinecone (alternative): in .env, set VECTOR_BACKEND=pinecone and PINECONE_API_KEY=.... Indexes are created automatically.
+
+3. Run the API
+bash
+uvicorn idp.api:app --reload
+Open http://localhost:8000/docs for an interactive page where you can try every endpoint.
+
+Or use curl in a second terminal:
+
+bash
+# Upload and process a document
+curl -F file=@data/sample_docs/remote_work_policy.md \
+     -F strategy=recursive -F chunk_size=800 -F chunk_overlap=100 \
+     http://localhost:8000/ingest
+
+# Ask a question
+curl -X POST http://localhost:8000/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question":"How many remote days per week are allowed?","strategy":"recursive"}'
+
+# See extracted summaries, key points and entities
+curl http://localhost:8000/documents
+Use strategy=semantic to try the other chunking method. Ingest and ask with the same strategy, because each strategy has its own collection.
+
+4. Run the chunking comparison and dashboard
+bash
+python evaluation/run_eval.py --strategies recursive semantic
+streamlit run dashboard/app.py
+The first command ingests the docs in data/sample_docs/ under both strategies, answers the questions in evaluation/eval_questions.json, and scores them with RAGAS. It writes results/eval_results.json. The second opens the dashboard at http://localhost:8501.
+
+To use your own data, put PDFs, DOCX, HTML or Markdown files in a folder and add your own question/reference pairs to eval_questions.json:
+
+bash
+python evaluation/run_eval.py --docs path/to/your/docs --questions path/to/questions.json
+5. Run the tests (no API key needed)
+bash
+pytest
+Common problems
+connection refused on port 6333: Qdrant isn’t running. Run docker compose up -d, or switch to Pinecone.
+OpenAI auth error: check that .env is in the project root and the key is correct.
+Evaluation costs and time: it makes many LLM calls. The sample takes a minute or two and costs a few cents, but a large corpus costs more. The semantic chunker also makes extra embedding calls.
+ModuleNotFoundError: idp: run pip install -e . again with the virtual environment active.
+no i am using macbook
+
+Here are the steps for macOS. The main differences from before are using python3 instead of python and installing tools with Homebrew.
+
+1. One-time prerequisites
+Open Terminal and check what you have:
+
+bash
+python3 --version      # need 3.10 or newer
+git --version
+If Python is older than 3.10 or missing, install Homebrew from https://brew.sh, then:
+
+bash
+brew install python@3.12 git gh
+Install Docker Desktop for Mac from https://www.docker.com/products/docker-desktop and open it once so it’s running. On an M1/M2/M3 Mac, choose the Apple Silicon download.
+
+2. Set up the project
+bash
+cd ~/Downloads                        # wherever you saved the zip
+unzip intelligent-document-processor.zip
+cd intelligent-document-processor
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env
+open -e .env                          # opens in TextEdit
+In .env, set OPENAI_API_KEY=sk-... and save.
+
+3. Start the vector database
+bash
+docker compose up -d
+If you’d rather not use Docker, use a free cloud database instead:
+
+Qdrant Cloud: create a free cluster at https://cloud.qdrant.io, then set QDRANT_URL and QDRANT_API_KEY in .env.
+Pinecone: set VECTOR_BACKEND=pinecone and PINECONE_API_KEY=... in .env.
+4. Run the API
+bash
+uvicorn idp.api:app --reload
+Open http://localhost:8000/docs in Safari or Chrome. You can upload files and ask questions from that page.
+
+To use curl instead, open a second Terminal tab, then cd into the project and run source .venv/bin/activate:
+
+bash
+curl -F file=@data/sample_docs/remote_work_policy.md \
+     -F strategy=recursive http://localhost:8000/ingest
+
+curl -X POST http://localhost:8000/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question":"How many remote days per week are allowed?","strategy":"recursive"}'
+5. Run the evaluation and dashboard
+Run these in a Terminal tab with the virtual environment active:
+
+bash
+python evaluation/run_eval.py --strategies recursive semantic
+streamlit run dashboard/app.py
+The dashboard opens automatically in your browser at http://localhost:8501.
+
+6. Push to GitHub
+bash
+gh auth login        # choose GitHub.com → HTTPS → login with browser
+./scripts/push_to_github.sh
+The script prints your repo link when it finishes.
+
+Mac-specific problems
+zsh: command not found: python: use python3. Inside the activated .venv, plain python also works.
+zsh: no matches found: .[dev]: keep the quotes exactly as in pip install -e ".[dev]".
+Cannot connect to the Docker daemon: Docker Desktop isn’t running. Open it from Applications and wait for the whale icon to stop animating.
+permission denied: ./scripts/push_to_github.sh: run chmod +x scripts/push_to_github.sh, or run it with bash scripts/push_to_github.sh.
+Port 8000 already in use: run uvicorn idp.api:app --reload --port 8001.
+unzip created a nested folder: make sure you cd into the folder that contains pyproject.toml.
+curl -X POST http://localhost:8000/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question":"How many remote days per week are allowed?","strategy":"recursive"}'
+{"answer":"I don't know.","sources":[]}%
+
+"sources":[] means the search found nothing at all, so the idp-recursive collection is almost certainly empty. The usual causes are that the document was never ingested, or that it was ingested under a different strategy. The API creates an empty collection the first time you ask, so there’s no error.
+
+1. Check what’s in the database
+bash
+curl http://localhost:6333/collections/idp-recursive
+Look at points_count in the output. If it’s 0 or you get “not found”, nothing was stored.
+
+2. Ingest the document, then check the response
+bash
+curl -F file=@data/sample_docs/remote_work_policy.md \
+     -F strategy=recursive \
+     -F chunk_size=800 -F chunk_overlap=100 \
+     http://localhost:8000/ingest
+You should get JSON back with "chunks" greater than 0, plus the extracted summary and key points. If you get an error instead, paste it here. Common ones are a bad OPENAI_API_KEY or Qdrant not running.
+
+Run this from the project folder, or the @data/sample_docs/... path won’t resolve.
+
+3. Ask again
+bash
+curl -X POST http://localhost:8000/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question":"How many remote days per week are allowed?","strategy":"recursive"}'
+You should now get something like “up to three days per week”, with a non-empty sources list.
+
+If it’s still empty
+Strategy mismatch: ingest and ask must use the same strategy. Ingesting with semantic fills idp-semantic, which recursive never searches.
+Different database: if you changed QDRANT_URL or VECTOR_BACKEND in .env between the two calls, restart uvicorn so it picks up the change.
+Qdrant restarted without its data: if you ran docker compose down -v or deleted the qdrant_storage folder, re-ingest.
+If the ingest call succeeds with chunks greater than 0 but /ask is still empty, send me both outputs and the points_count from step 1.
+
+so what this does curl -F file=@data/sample_docs/remote_work_policy.md \
+     -F strategy=recursive \
+     -F chunk_size=800 -F chunk_overlap=100 \
+     http://localhost:8000/ingest does it load it to the rag database
+
+Yes. That command uploads the document to your API, and the API processes it and stores it in the vector database (Qdrant) so you can ask questions about it later.
+
+What the command itself means
+curl -F ... sends a file upload (a form POST) to your running FastAPI server.
+file=@data/sample_docs/remote_work_policy.md is the file to upload. The @ tells curl to send the contents of that file.
+strategy=recursive picks the chunking method.
+chunk_size=800 and chunk_overlap=100 set the maximum chunk length in characters, and how many characters adjacent chunks share.
+http://localhost:8000/ingest is the endpoint on your server that handles the upload.
+What the server does with it
+Load: it reads the file text (PDF, DOCX, HTML or Markdown).
+Extract: it sends the text to the OpenAI chat model, which returns a title, summary, key points, entities and topics. These are saved to data/processed/<id>.json, and you can see them at /documents.
+Chunk: it splits the text into pieces of about 800 characters, each overlapping the previous one by 100.
+Embed: it sends each chunk to OpenAI text-embedding-3-large, which turns it into a vector (a list of 3072 numbers representing its meaning).
+Store: it saves the vectors and the chunk text in the Qdrant collection idp-recursive. This is the “RAG database”.
+The response you get back reports how many chunks were stored and how long it took.
+
+How it connects to /ask
+When you ask a question, the server embeds your question the same way and finds the chunks in idp-recursive whose vectors are closest to it. It sends those chunks and your question to the chat model, which writes the answer from them. That’s why /ask returned “I don’t know” with empty sources before: the collection was empty because nothing had been ingested yet.
+
+You only need to ingest a document once. After that, you can ask as many questions as you like. To add more documents, run the same command with a different file, keeping the same strategy so they land in the same collection.
+
+what this does run_eval.py --strategies recursive semantic
+
+python evaluation/run_eval.py --strategies recursive semantic runs an automated experiment that answers one question: which chunking strategy gives better answers on my documents, recursive or semantic?
+
+/ingest and /ask are for using the system. run_eval.py is for measuring it.
+
+What it does, step by step
+For each strategy you listed (recursive, then semantic), it:
+
+Creates a fresh, isolated collection in Qdrant, named like idp-eval-recursive-<timestamp>. This keeps the experiment separate from your real data.
+Ingests every document in data/sample_docs/ into that collection, using that strategy’s chunking. It skips the summary extraction, since that isn’t needed here.
+Asks every question in evaluation/eval_questions.json. For each one it retrieves chunks, generates an answer, and records the question, retrieved chunks, answer and reference answer.
+Scores the results with RAGAS, which uses an LLM as a judge:
+Faithfulness: is the answer supported by the retrieved chunks, or did the model make things up?
+Context precision: are the retrieved chunks relevant, and ranked near the top?
+Context recall: did the retrieved chunks contain the information needed to match the reference answer?
+Writes the averages to results/eval_results.json, along with the number of chunks and average chunk size per strategy.
+Why both strategies?
+They split text differently, so retrieval quality changes:
+
+recursive cuts at fixed sizes (about 1000 characters) along paragraph and sentence boundaries.
+semantic cuts where the meaning of the text shifts, so chunk sizes vary.
+Running both on the same documents and questions gives a fair side-by-side comparison.
+
+What you do with the output
+The terminal prints one line per strategy with its scores. Then streamlit run dashboard/app.py reads the JSON file and shows them as charts and tables.
+
+Things to know
+It costs money and takes time. It makes many OpenAI calls (embeddings, answers, judging), and semantic chunking adds more embedding calls. The sample takes a minute or two and costs a few cents, but your own documents will cost more.
+The sample is too small to be meaningful. One document and five questions will likely give near-identical, near-perfect scores. For real differences you need your own documents and 30+ question/reference pairs.
+Each run leaves its eval collections in Qdrant. They’re harmless, but you can delete them from the Qdrant dashboard at http://localhost:6333/dashboard if you want to tidy up.
